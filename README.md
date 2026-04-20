@@ -43,6 +43,54 @@ sudo docker run --rm -it \
     2>&1 | sudo tee /home/hfh/event-generator/sysdig_scap/falco_replay/debugfs.log
 ```
 
+What's more, we need to pre-process before giving to nodlink,
+```bash
+cd sysdig_scap
+SCAP=debugfs.scap
+USV=./scap2json/debugfs.usv
+JSONL=./scap2json/debugfs.jsonl
+JSON=./scap2json/debugfs.json
+DELIM=$'\x1f'
+FMT="%evt.args${DELIM}%evt.num${DELIM}%evt.rawtime${DELIM}%evt.type${DELIM}%fd.name${DELIM}%proc.cmdline${DELIM}%proc.name${DELIM}%proc.pcmdline${DELIM}%proc.pname"
+sysdig -r "$SCAP" -p "$FMT" > "$USV"
+jq -Rc '
+split("\u001f") as $f |
+{
+  "evt.args": ($f[0] // ""),
+  "evt.num": (($f[1] // "") | tonumber? // null),
+  "evt.time": (($f[2] // "") | tonumber? // null),
+  "evt.type": ($f[3] // ""),
+  "fd.name": ($f[4] // ""),
+  "proc.cmdline": ($f[5] // ""),
+  "proc.name": ($f[6] // ""),
+  "proc.pcmdline": ($f[7] // ""),
+  "proc.pname": ($f[8] // "")
+}
+' "$USV" > "$JSONL"
+
+cd scap2json
+jq -s '.' "$JSONL" > "$JSON"
+jq -c '.[]' debugfs.json > debugfs-v1.json
+
+mkdir -p debugfs
+sudo chown syssecure:syssecure ./
+cd ..
+
+grep '"proc.cmdline"' debugfs.json | sort -u | sed 's/^.*proc.cmdline": //' > debugfs.txt
+
+sudo cp debugfs-v1.json /home/hfh/A-SysArmor/Nodlink/Sysdig/model/
+sudo mv debugfs.* debugfs-v1.json debugfs
+```
+
+Now, use nodlink to detect,
+```bash
+cd /home/hfh/A-SysArmor/Nodlink/Sysdig/real-time
+# 80th
+python3 main.py --d /home/hfh/A-SysArmor/Nodlink/Sysdig/model --t 28.01 --f /home/hfh/A-SysArmor/Nodlink/Sysdig/model/debugfs-v1.json
+# 90th
+python3 main.py --d /home/hfh/A-SysArmor/Nodlink/Sysdig/model --t 51.34 --f /home/hfh/A-SysArmor/Nodlink/Sysdig/model/debugfs-v1.json
+```
+
 ------------------------------------------------------------
 Before that, I tried to start a docker without ```--rm```, however, I found it difficult to keep running when I ```sudo docker ps -a```, I found it couldn't be up.
 ```bash
